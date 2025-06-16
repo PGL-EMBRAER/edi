@@ -298,6 +298,17 @@
             font-size: 12px;
             margin-left: 10px;
         }
+
+        .debug-info {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -324,6 +335,9 @@
             <button id="uploadBtn" class="btn btn-full" disabled>
                 Processar Arquivo
             </button>
+
+            <!-- Debug Info -->
+            <div id="debugInfo" class="debug-info hidden"></div>
         </div>
 
         <!-- Stats Section -->
@@ -417,59 +431,88 @@
             }
         }
 
-        // Parser de arquivos EDI
+        // Parser de arquivos EDI - CORRIGIDO
         class EDIParser {
             static parseFile(fileContent, filename) {
                 const records = [];
                 const lines = fileContent.trim().split('\n');
                 
-                for (const line of lines) {
+                console.log(`Processando arquivo: ${filename}`);
+                console.log(`Total de linhas: ${lines.length}`);
+                
+                for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                    const line = lines[lineIndex];
                     if (line.trim()) {
                         const columns = line.split('\t');
                         
-                        if (columns.length >= 29) {
+                        console.log(`Linha ${lineIndex + 1}: ${columns.length} colunas`);
+                        
+                        // Verifica se tem pelo menos as colunas necessárias
+                        if (columns.length >= 39) {
                             try {
-                                const wr_number = columns[1];  // Coluna 2
-                                const coluna_5 = columns[4];   // Coluna 5
-                                const coluna_6 = columns[5];   // Coluna 6
-                                const coluna_7 = columns[6];   // Coluna 7
-                                const coluna_8 = columns[7];   // Coluna 8
-                                const invoice = columns[25];   // Coluna 26 (Invoice)
-                                const data_coleta = columns[28]; // Última coluna
+                                // Estrutura correta baseada na análise:
+                                const wr_number = columns[1];      // Coluna 2: WR1004112
+                                const coluna_5 = columns[4];       // Coluna 5: 20250611
+                                const coluna_6 = columns[5];       // Coluna 6: 283.0000
+                                const coluna_7 = columns[6];       // Coluna 7: 974.2915
+                                const coluna_8 = columns[7];       // Coluna 8: 974.2915
+                                const invoice = columns[25];       // Coluna 26: 0183001791
+                                const data_coleta = columns[38];   // Coluna 39 (última): 20250611
                                 
-                                // Valida data de coleta
-                                if (data_coleta && data_coleta.length === 8) {
-                                    const year = parseInt(data_coleta.substring(0, 4));
-                                    const month = parseInt(data_coleta.substring(4, 6));
-                                    const day = parseInt(data_coleta.substring(6, 8));
-                                    
-                                    // Verifica se é uma data válida
-                                    const date = new Date(year, month - 1, day);
-                                    if (date.getFullYear() === year && 
-                                        date.getMonth() === month - 1 && 
-                                        date.getDate() === day) {
+                                console.log(`Dados extraídos:`, {
+                                    wr_number,
+                                    invoice,
+                                    coluna_5,
+                                    coluna_6,
+                                    coluna_7,
+                                    coluna_8,
+                                    data_coleta
+                                });
+                                
+                                // Valida se os campos obrigatórios existem
+                                if (wr_number && invoice && data_coleta) {
+                                    // Valida data de coleta (deve ter 8 dígitos)
+                                    if (data_coleta && data_coleta.length === 8 && /^\d{8}$/.test(data_coleta)) {
+                                        const year = parseInt(data_coleta.substring(0, 4));
+                                        const month = parseInt(data_coleta.substring(4, 6));
+                                        const day = parseInt(data_coleta.substring(6, 8));
                                         
-                                        records.push({
-                                            id: Date.now() + Math.random(),
-                                            wr_number,
-                                            invoice,
-                                            coluna_5,
-                                            coluna_6,
-                                            coluna_7,
-                                            coluna_8,
-                                            data_coleta,
-                                            arquivo_origem: filename,
-                                            created_at: new Date().toISOString()
-                                        });
+                                        // Verifica se é uma data válida
+                                        if (year >= 2000 && year <= 2030 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                                            const record = {
+                                                id: Date.now() + Math.random(),
+                                                wr_number: wr_number || 'N/A',
+                                                invoice: invoice || 'N/A',
+                                                coluna_5: coluna_5 || 'N/A',
+                                                coluna_6: coluna_6 || 'N/A',
+                                                coluna_7: coluna_7 || 'N/A',
+                                                coluna_8: coluna_8 || 'N/A',
+                                                data_coleta: data_coleta,
+                                                arquivo_origem: filename,
+                                                created_at: new Date().toISOString()
+                                            };
+                                            
+                                            records.push(record);
+                                            console.log(`Registro válido adicionado:`, record);
+                                        } else {
+                                            console.log(`Data inválida: ${data_coleta} (ano: ${year}, mês: ${month}, dia: ${day})`);
+                                        }
+                                    } else {
+                                        console.log(`Data de coleta inválida: "${data_coleta}" (deve ter 8 dígitos)`);
                                     }
+                                } else {
+                                    console.log(`Campos obrigatórios faltando: WR=${wr_number}, Invoice=${invoice}, Data=${data_coleta}`);
                                 }
                             } catch (error) {
-                                console.error('Erro ao processar linha:', error);
+                                console.error(`Erro ao processar linha ${lineIndex + 1}:`, error);
                             }
+                        } else {
+                            console.log(`Linha ${lineIndex + 1} tem apenas ${columns.length} colunas (mínimo: 39)`);
                         }
                     }
                 }
                 
+                console.log(`Total de registros válidos encontrados: ${records.length}`);
                 return records;
             }
         }
@@ -490,6 +533,7 @@
         const alertContainer = document.getElementById('alertContainer');
         const statsContainer = document.getElementById('statsContainer');
         const statsGrid = document.getElementById('statsGrid');
+        const debugInfo = document.getElementById('debugInfo');
 
         // Event Listeners
         document.addEventListener('DOMContentLoaded', function() {
@@ -523,13 +567,32 @@
 
             uploadBtn.disabled = true;
             uploadBtn.textContent = 'Processando...';
+            debugInfo.classList.remove('hidden');
 
             try {
                 const fileContent = await readFileContent(file);
+                
+                // Mostra informações de debug
+                const lines = fileContent.trim().split('\n');
+                const firstLine = lines[0] || '';
+                const columns = firstLine.split('\t');
+                
+                debugInfo.innerHTML = `
+                    <strong>Debug do Arquivo:</strong><br>
+                    Nome: ${file.name}<br>
+                    Tamanho: ${file.size} bytes<br>
+                    Linhas: ${lines.length}<br>
+                    Colunas na primeira linha: ${columns.length}<br>
+                    Primeiras 5 colunas: ${columns.slice(0, 5).map((col, i) => `[${i+1}] ${col}`).join(', ')}<br>
+                    Coluna 26 (Invoice): [${columns[25] || 'vazia'}]<br>
+                    Última coluna: [${columns[columns.length - 1] || 'vazia'}]
+                `;
+                
                 const records = EDIParser.parseFile(fileContent, file.name);
 
                 if (records.length === 0) {
-                    showAlert('Nenhum registro válido encontrado no arquivo', 'error');
+                    showAlert('Nenhum registro válido encontrado no arquivo. Verifique o formato e estrutura.', 'error');
+                    debugInfo.innerHTML += '<br><strong>Possíveis problemas:</strong><br>- Arquivo não tem 39 colunas<br>- Data de coleta inválida<br>- Campos obrigatórios vazios';
                     return;
                 }
 
@@ -537,11 +600,13 @@
                 showAlert(`Arquivo processado com sucesso! ${records.length} registros adicionados.`, 'success');
                 
                 fileInput.value = '';
+                debugInfo.classList.add('hidden');
                 loadRecords();
                 loadStats();
 
             } catch (error) {
                 showAlert('Erro ao processar arquivo: ' + error.message, 'error');
+                debugInfo.innerHTML += `<br><strong>Erro:</strong> ${error.message}`;
             } finally {
                 uploadBtn.disabled = false;
                 uploadBtn.textContent = 'Processar Arquivo';
