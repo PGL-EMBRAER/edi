@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Plataforma de Controle de Coletas</title>
     <style>
+        /* Estilos CSS fornecidos pelo usuário, com algumas pequenas adições */
         * {
             margin: 0;
             padding: 0;
@@ -116,6 +117,12 @@
             background: #c0392b;
         }
 
+        /* NEW: Style for smaller buttons */
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
         .alert {
             padding: 15px;
             border-radius: 8px;
@@ -162,14 +169,27 @@
             transform: translateY(-2px);
         }
 
+        /* NEW: Improved layout for record header */
         .record-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 15px;
-            flex-wrap: wrap;
-            gap: 10px;
+            flex-wrap: wrap; /* Allows wrapping on smaller screens */
+            gap: 15px; /* Space between badge group and action group */
         }
+        .record-badges {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .record-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px; /* Space between date and delete button */
+            flex-wrap: wrap;
+        }
+
 
         .badge {
             background: #667eea;
@@ -275,14 +295,26 @@
             .filters {
                 grid-template-columns: 1fr;
             }
-            
+
             .header h1 {
                 font-size: 2rem;
             }
-            
+
+            /* Adjust record-header for small screens */
             .record-header {
                 flex-direction: column;
                 align-items: flex-start;
+                gap: 10px;
+            }
+            .record-actions {
+                flex-direction: column;
+                align-items: flex-start;
+                width: 100%;
+                gap: 5px;
+            }
+            .btn-sm {
+                width: 100%; /* Make delete button full width on small screens */
+                margin-left: 0;
             }
         }
 
@@ -326,12 +358,12 @@
         <div class="card">
             <h2>📤 Upload de Arquivo EDI</h2>
             <p style="color: #666; margin-bottom: 20px;">Selecione um arquivo .txt para extrair os dados de coleta</p>
-            
+
             <div class="form-group">
                 <label for="fileInput">Arquivo EDI (.txt)</label>
                 <input type="file" id="fileInput" accept=".txt" />
             </div>
-            
+
             <button id="uploadBtn" class="btn btn-full" disabled>
                 Processar Arquivo
             </button>
@@ -386,18 +418,43 @@
 
             getRecords() {
                 const data = localStorage.getItem(this.storageKey);
-                return data ? JSON.parse(data) : [];
+                // Retorna um array vazio se não houver dados ou se a análise falhar
+                try {
+                    return data ? JSON.parse(data) : [];
+                } catch (e) {
+                    console.error("Erro ao analisar registros do localStorage:", e);
+                    return []; // Retorna vazio em caso de erro de parsing
+                }
             }
 
             saveRecords(records) {
+                // Filtra registros duplicados baseados em um identificador único, se houver
+                // Para este caso, vamos considerar o ID gerado (Date.now() + Math.random()) como único.
+                // Se o WR e Invoice fossem considerados únicos, uma lógica de desduplicação mais complexa seria necessária aqui.
                 localStorage.setItem(this.storageKey, JSON.stringify(records));
             }
 
             addRecords(newRecords) {
                 const existing = this.getRecords();
-                const updated = [...existing, ...newRecords];
+                // Utiliza um Set para evitar IDs duplicados ao adicionar, garantindo unicidade dos registros
+                const uniqueRecords = new Map(existing.map(record => [record.id, record]));
+                newRecords.forEach(record => uniqueRecords.set(record.id, record));
+
+                const updated = Array.from(uniqueRecords.values());
                 this.saveRecords(updated);
                 return updated;
+            }
+
+            // NEW: Método para excluir um registro por ID
+            deleteRecord(idToDelete) {
+                let records = this.getRecords();
+                const initialLength = records.length;
+                records = records.filter(record => record.id !== idToDelete);
+                if (records.length < initialLength) {
+                    this.saveRecords(records);
+                    return true; // Sucesso na exclusão
+                }
+                return false; // Nenhum registro encontrado com o ID fornecido
             }
 
             clearRecords() {
@@ -408,6 +465,7 @@
                 const records = this.getRecords();
                 return records.filter(record => {
                     const monthMatch = !month || record.data_coleta.startsWith(month.replace('-', ''));
+                    // Use includes para busca parcial do WR Number, tornando o filtro mais flexível
                     const wrMatch = !wrNumber || record.wr_number.toLowerCase().includes(wrNumber.toLowerCase());
                     return monthMatch && wrMatch;
                 });
@@ -416,103 +474,113 @@
             getStats() {
                 const records = this.getRecords();
                 const monthCounts = {};
-                
+
                 records.forEach(record => {
-                    const monthKey = record.data_coleta.substring(0, 6); // YYYYMM
-                    monthCounts[monthKey] = (monthCounts[monthKey] || 0) + 1;
+                    // Garante que data_coleta seja uma string válida antes de tentar substrings
+                    if (typeof record.data_coleta === 'string' && record.data_coleta.length >= 6) {
+                        const monthKey = record.data_coleta.substring(0, 6); // YYYYMM
+                        monthCounts[monthKey] = (monthCounts[monthKey] || 0) + 1;
+                    }
                 });
 
                 return Object.entries(monthCounts)
                     .map(([month, count]) => ({
-                        month: `${month.substring(4, 6)}/${month.substring(0, 4)}`,
+                        month: `${month.substring(4, 6)}/${month.substring(0, 4)}`, // Formata para MM/YYYY
                         count
                     }))
+                    // Ordena por mês do mais recente para o mais antigo para melhor visualização
                     .sort((a, b) => b.month.localeCompare(a.month));
             }
         }
 
-        // Parser de arquivos EDI - CORRIGIDO
+        // Parser de arquivos EDI - ATUALIZADO
         class EDIParser {
             static parseFile(fileContent, filename) {
                 const records = [];
                 const lines = fileContent.trim().split('\n');
-                
-                console.log(`Processando arquivo: ${filename}`);
-                console.log(`Total de linhas: ${lines.length}`);
-                
+
+                console.log(`[EDIParser] Processando arquivo: ${filename}`);
+                console.log(`[EDIParser] Total de linhas: ${lines.length}`);
+
                 for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
                     const line = lines[lineIndex];
-                    if (line.trim()) {
+                    if (line.trim()) { // Ignora linhas em branco
                         const columns = line.split('\t');
-                        
-                        console.log(`Linha ${lineIndex + 1}: ${columns.length} colunas`);
-                        
-                        // Verifica se tem pelo menos as colunas necessárias
+
+                        console.log(`[EDIParser] Linha ${lineIndex + 1}: ${columns.length} colunas`);
+
+                        // O arquivo de exemplo possui 39 colunas (índices de 0 a 38).
+                        // Precisamos de pelo menos a 39ª coluna (índice 38) para data_coleta e coluna_5.
                         if (columns.length >= 39) {
                             try {
-                                // Estrutura correta baseada na análise:
-                                const wr_number = columns[1];      // Coluna 2: WR1004112
-                                const coluna_5 = columns[4];       // Coluna 5: 20250611
-                                const coluna_6 = columns[5];       // Coluna 6: 283.0000
-                                const coluna_7 = columns[6];       // Coluna 7: 974.2915
-                                const coluna_8 = columns[7];       // Coluna 8: 974.2915
-                                const invoice = columns[25];       // Coluna 26: 0183001791
-                                const data_coleta = columns[38];   // Coluna 39 (última): 20250611
-                                
-                                console.log(`Dados extraídos:`, {
+                                // Mapeamento das colunas conforme sua necessidade e exemplo de arquivo:
+                                const wr_number = columns[1];      // Coluna 2: Exemplo "WR1003888"
+                                const invoice = columns[25];       // Coluna 26: Exemplo "0183001700"
+                                const data_coleta = columns[38];   // Coluna 39 (última): Exemplo "20250514"
+
+                                // NEW: A Coluna 5 no display deve receber a data da última coluna (data_coleta)
+                                const data_para_coluna_5_display = data_coleta;
+
+                                // Outras colunas, mantidas como estavam na sua estrutura original
+                                const coluna_6 = columns[5];       // Coluna 6
+                                const coluna_7 = columns[6];       // Coluna 7
+                                const coluna_8 = columns[7];       // Coluna 8
+
+                                console.log(`[EDIParser] Dados extraídos da linha ${lineIndex + 1}:`, {
                                     wr_number,
                                     invoice,
-                                    coluna_5,
+                                    coluna_5_display: data_para_coluna_5_display,
                                     coluna_6,
                                     coluna_7,
                                     coluna_8,
                                     data_coleta
                                 });
-                                
-                                // Valida se os campos obrigatórios existem
+
+                                // Validação básica dos campos essenciais
                                 if (wr_number && invoice && data_coleta) {
-                                    // Valida data de coleta (deve ter 8 dígitos)
+                                    // Validação do formato da data (YYYYMMDD, 8 dígitos numéricos)
                                     if (data_coleta && data_coleta.length === 8 && /^\d{8}$/.test(data_coleta)) {
                                         const year = parseInt(data_coleta.substring(0, 4));
                                         const month = parseInt(data_coleta.substring(4, 6));
                                         const day = parseInt(data_coleta.substring(6, 8));
-                                        
-                                        // Verifica se é uma data válida
-                                        if (year >= 2000 && year <= 2030 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+
+                                        // Verificação de validade de data mais robusta (checa se a data existe no calendário)
+                                        const testDate = new Date(year, month - 1, day); // month is 0-indexed for Date object
+                                        if (testDate.getFullYear() === year && testDate.getMonth() === month - 1 && testDate.getDate() === day) {
                                             const record = {
-                                                id: Date.now() + Math.random(),
-                                                wr_number: wr_number || 'N/A',
-                                                invoice: invoice || 'N/A',
-                                                coluna_5: coluna_5 || 'N/A',
-                                                coluna_6: coluna_6 || 'N/A',
-                                                coluna_7: coluna_7 || 'N/A',
-                                                coluna_8: coluna_8 || 'N/A',
-                                                data_coleta: data_coleta,
+                                                id: Date.now() + Math.random(), // Gera um ID único para cada registro
+                                                wr_number: wr_number.trim() || 'N/A',
+                                                invoice: invoice.trim() || 'N/A',
+                                                coluna_5: data_para_coluna_5_display.trim() || 'N/A', // Atribui a nova fonte de dados
+                                                coluna_6: coluna_6 ? coluna_6.trim() : 'N/A',
+                                                coluna_7: coluna_7 ? coluna_7.trim() : 'N/A',
+                                                coluna_8: coluna_8 ? coluna_8.trim() : 'N/A',
+                                                data_coleta: data_coleta.trim(), // Data principal para filtros
                                                 arquivo_origem: filename,
-                                                created_at: new Date().toISOString()
+                                                created_at: new Date().toISOString() // Timestamp de criação
                                             };
-                                            
+
                                             records.push(record);
-                                            console.log(`Registro válido adicionado:`, record);
+                                            console.log(`[EDIParser] Registro válido adicionado:`, record);
                                         } else {
-                                            console.log(`Data inválida: ${data_coleta} (ano: ${year}, mês: ${month}, dia: ${day})`);
+                                            console.warn(`[EDIParser] Data inválida ou fora do range (YYYYMMDD) para a linha ${lineIndex + 1}: ${data_coleta}`);
                                         }
                                     } else {
-                                        console.log(`Data de coleta inválida: "${data_coleta}" (deve ter 8 dígitos)`);
+                                        console.warn(`[EDIParser] Formato da data de coleta inválida na linha ${lineIndex + 1}: "${data_coleta}" (esperado YYYYMMDD de 8 dígitos)`);
                                     }
                                 } else {
-                                    console.log(`Campos obrigatórios faltando: WR=${wr_number}, Invoice=${invoice}, Data=${data_coleta}`);
+                                    console.warn(`[EDIParser] Campos obrigatórios (WR, Invoice ou Data de Coleta) faltando na linha ${lineIndex + 1}. Linha ignorada.`);
                                 }
                             } catch (error) {
-                                console.error(`Erro ao processar linha ${lineIndex + 1}:`, error);
+                                console.error(`[EDIParser] Erro ao processar linha ${lineIndex + 1} do arquivo ${filename}:`, error);
                             }
                         } else {
-                            console.log(`Linha ${lineIndex + 1} tem apenas ${columns.length} colunas (mínimo: 39)`);
+                            console.warn(`[EDIParser] Linha ${lineIndex + 1} tem apenas ${columns.length} colunas (mínimo de 39 esperado para ${filename}). Linha ignorada.`);
                         }
                     }
                 }
-                
-                console.log(`Total de registros válidos encontrados: ${records.length}`);
+
+                console.log(`[EDIParser] Total de registros válidos encontrados em ${filename}: ${records.length}`);
                 return records;
             }
         }
@@ -520,7 +588,7 @@
         // Inicialização da aplicação
         const storage = new ColetaStorage();
         let currentRecords = [];
-        
+
         // DOM Elements
         const fileInput = document.getElementById('fileInput');
         const uploadBtn = document.getElementById('uploadBtn');
@@ -537,9 +605,9 @@
 
         // Event Listeners
         document.addEventListener('DOMContentLoaded', function() {
-            loadRecords();
-            loadStats();
-            setupEventListeners();
+            loadRecords(); // Carrega os registros existentes ao iniciar a página
+            loadStats();   // Carrega as estatísticas existentes
+            setupEventListeners(); // Configura todos os ouvintes de eventos
         });
 
         function setupEventListeners() {
@@ -547,77 +615,96 @@
             uploadBtn.addEventListener('click', handleUpload);
             applyFiltersBtn.addEventListener('click', applyFilters);
             clearAllBtn.addEventListener('click', clearAllRecords);
+
+            // NEW: Delegação de eventos para botões de exclusão (adicionados dinamicamente)
+            recordsContainer.addEventListener('click', function(e) {
+                // Verifica se o clique foi em um botão com a classe 'delete-record-btn'
+                if (e.target.classList.contains('delete-record-btn')) {
+                    const recordId = parseFloat(e.target.dataset.id); // Pega o ID do registro a ser excluído
+                    if (confirm('Tem certeza que deseja excluir este registro? Esta ação não pode ser desfeita.')) {
+                        const success = storage.deleteRecord(recordId);
+                        if (success) {
+                            showAlert('Registro excluído com sucesso!', 'success');
+                        } else {
+                            showAlert('Falha ao excluir registro. Ele pode já ter sido removido.', 'error');
+                        }
+                        loadRecords(); // Recarrega a lista de registros para atualizar a UI
+                        loadStats();   // Recarrega as estatísticas
+                    }
+                }
+            });
         }
 
         function handleFileSelect(e) {
             const file = e.target.files[0];
+            // Habilita o botão de upload apenas se um arquivo .txt válido for selecionado
             uploadBtn.disabled = !file || !file.name.toLowerCase().endsWith('.txt');
-            
+
             if (file && !file.name.toLowerCase().endsWith('.txt')) {
-                showAlert('Por favor, selecione um arquivo .txt válido', 'error');
+                showAlert('Por favor, selecione um arquivo .txt válido.', 'error');
             }
         }
 
         async function handleUpload() {
             const file = fileInput.files[0];
             if (!file) {
-                showAlert('Por favor, selecione um arquivo primeiro', 'error');
+                showAlert('Por favor, selecione um arquivo para processar.', 'error');
                 return;
             }
 
             uploadBtn.disabled = true;
             uploadBtn.textContent = 'Processando...';
-            debugInfo.classList.remove('hidden');
+            debugInfo.classList.remove('hidden'); // Exibe as informações de depuração
 
             try {
                 const fileContent = await readFileContent(file);
-                
-                // Mostra informações de debug
+
+                // Preenche as informações de debug para ajudar na análise do arquivo
                 const lines = fileContent.trim().split('\n');
                 const firstLine = lines[0] || '';
                 const columns = firstLine.split('\t');
-                
+
                 debugInfo.innerHTML = `
-                    <strong>Debug do Arquivo:</strong><br>
+                    <strong>Informações de Debug do Arquivo:</strong><br>
                     Nome: ${file.name}<br>
                     Tamanho: ${file.size} bytes<br>
-                    Linhas: ${lines.length}<br>
-                    Colunas na primeira linha: ${columns.length}<br>
-                    Primeiras 5 colunas: ${columns.slice(0, 5).map((col, i) => `[${i+1}] ${col}`).join(', ')}<br>
-                    Coluna 26 (Invoice): [${columns[25] || 'vazia'}]<br>
-                    Última coluna: [${columns[columns.length - 1] || 'vazia'}]
+                    Total de Linhas: ${lines.length}<br>
+                    Colunas na Primeira Linha: ${columns.length}<br>
+                    Primeiras 5 colunas: ${columns.slice(0, Math.min(columns.length, 5)).map((col, i) => `[${i+1}] "${col.trim()}"`).join(', ')}<br>
+                    Coluna 26 (Invoice - índice 25): "${columns[25] ? columns[25].trim() : 'vazia'}"<br>
+                    Última coluna (Data - índice 38): "${columns[38] ? columns[38].trim() : 'vazia'}"
                 `;
-                
+
                 const records = EDIParser.parseFile(fileContent, file.name);
 
                 if (records.length === 0) {
-                    showAlert('Nenhum registro válido encontrado no arquivo. Verifique o formato e estrutura.', 'error');
-                    debugInfo.innerHTML += '<br><strong>Possíveis problemas:</strong><br>- Arquivo não tem 39 colunas<br>- Data de coleta inválida<br>- Campos obrigatórios vazios';
+                    showAlert('Nenhum registro válido encontrado no arquivo. Verifique o formato e a estrutura esperada (39 colunas, data YYYYMMDD).', 'error');
+                    debugInfo.innerHTML += '<br><strong>Possíveis problemas:</strong><br>- Arquivo com menos de 39 colunas.<br>- Formato de data inválido na última coluna.<br>- Campos obrigatórios (WR, Invoice, Data) vazios ou incorretos.';
                     return;
                 }
 
-                storage.addRecords(records);
-                showAlert(`Arquivo processado com sucesso! ${records.length} registros adicionados.`, 'success');
-                
-                fileInput.value = '';
-                debugInfo.classList.add('hidden');
-                loadRecords();
-                loadStats();
+                storage.addRecords(records); // Adiciona os novos registros ao armazenamento
+                showAlert(`Arquivo processado com sucesso! ${records.length} novos registros adicionados.`, 'success');
 
+                fileInput.value = ''; // Limpa o campo de seleção de arquivo
+                debugInfo.classList.add('hidden'); // Esconde as informações de depuração após o sucesso
+                loadRecords(); // Atualiza a exibição dos registros
+                loadStats();   // Atualiza as estatísticas
             } catch (error) {
                 showAlert('Erro ao processar arquivo: ' + error.message, 'error');
-                debugInfo.innerHTML += `<br><strong>Erro:</strong> ${error.message}`;
+                debugInfo.innerHTML += `<br><strong>Erro Detalhado:</strong> ${error.message}`;
             } finally {
                 uploadBtn.disabled = false;
                 uploadBtn.textContent = 'Processar Arquivo';
             }
         }
 
+        // Função auxiliar para ler o conteúdo do arquivo
         function readFileContent(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = e => resolve(e.target.result);
-                reader.onerror = e => reject(new Error('Erro ao ler arquivo'));
+                reader.onerror = e => reject(new Error('Falha ao ler o arquivo.'));
                 reader.readAsText(file, 'UTF-8');
             });
         }
@@ -625,24 +712,25 @@
         function loadRecords() {
             const month = monthFilter.value;
             const wrNumber = wrFilter.value;
-            
+
             currentRecords = storage.filterRecords(month, wrNumber);
-            displayRecords();
+            displayRecords(); // Renderiza os registros filtrados
         }
 
         function loadStats() {
             const stats = storage.getStats();
-            displayStats(stats);
+            displayStats(stats); // Renderiza as estatísticas
         }
 
+        // Função para renderizar os registros na interface
         function displayRecords() {
-            recordCount.textContent = currentRecords.length;
-            
+            recordCount.textContent = currentRecords.length; // Atualiza a contagem de registros
+
             if (currentRecords.length === 0) {
                 recordsContainer.innerHTML = `
                     <div class="empty-state">
                         <h3>Nenhum registro encontrado</h3>
-                        <p>Faça o upload de um arquivo EDI para começar.</p>
+                        <p>Faça o upload de um arquivo EDI para começar ou ajuste os filtros.</p>
                     </div>
                 `;
                 return;
@@ -651,18 +739,23 @@
             recordsContainer.innerHTML = currentRecords.map(record => `
                 <div class="record">
                     <div class="record-header">
-                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <div class="record-badges">
                             <span class="badge">${record.wr_number}</span>
                             <span class="badge badge-secondary">${record.invoice}</span>
                         </div>
-                        <div style="color: #666; font-size: 14px;">
-                            📅 ${formatDate(record.data_coleta)}
+                        <div class="record-actions">
+                            <div style="color: #666; font-size: 14px;">
+                                📅 ${formatDate(record.data_coleta)}
+                            </div>
+                            <!-- NEW: Botão de exclusão com data-id para identificação do registro -->
+                            <button class="btn btn-danger btn-sm delete-record-btn" data-id="${record.id}">🗑️ Excluir</button>
                         </div>
                     </div>
                     <div class="record-data">
                         <div class="data-item">
-                            <div class="data-label">Coluna 5</div>
-                            <div class="data-value">${record.coluna_5 || 'N/A'}</div>
+                            <div class="data-label">Data Coluna 5</div>
+                            <!-- NEW: Coluna 5 agora exibe a data da última coluna formatada -->
+                            <div class="data-value">${formatDate(record.coluna_5) || 'N/A'}</div>
                         </div>
                         <div class="data-item">
                             <div class="data-label">Coluna 6</div>
@@ -679,13 +772,14 @@
                     </div>
                     ${record.arquivo_origem ? `
                         <div style="margin-top: 15px; font-size: 12px; color: #666;">
-                            📁 Arquivo: ${record.arquivo_origem}
+                            📁 Arquivo de Origem: ${record.arquivo_origem}
                         </div>
                     ` : ''}
                 </div>
             `).join('');
         }
 
+        // Função para renderizar as estatísticas por mês
         function displayStats(stats) {
             if (stats.length === 0) {
                 statsContainer.classList.add('hidden');
@@ -702,39 +796,48 @@
         }
 
         function applyFilters() {
-            loadRecords();
+            loadRecords(); // Re-aplica os filtros e atualiza a exibição
         }
 
         function clearAllRecords() {
-            if (!confirm('Tem certeza que deseja limpar todos os registros?')) {
-                return;
+            if (!confirm('ATENÇÃO: Tem certeza que deseja LIMPAR TODOS os registros salvos? Esta ação não pode ser desfeita e removerá todos os dados do seu navegador.')) {
+                return; // O usuário cancelou
             }
 
-            storage.clearRecords();
-            showAlert('Todos os registros foram removidos com sucesso.', 'success');
-            loadRecords();
-            loadStats();
+            storage.clearRecords(); // Limpa todos os dados do localStorage
+            showAlert('Todos os registros foram removidos com sucesso do seu navegador.', 'success');
+            loadRecords(); // Atualiza a UI para mostrar que não há registros
+            loadStats();   // Zera as estatísticas
         }
 
+        // Função para formatar a data de YYYYMMDD para DD/MM/YYYY
         function formatDate(dateStr) {
-            if (!dateStr || dateStr.length !== 8) return 'N/A';
+            // Verifica se a string da data é válida e tem o comprimento esperado
+            if (!dateStr || typeof dateStr !== 'string' || dateStr.length !== 8 || !/^\d{8}$/.test(dateStr)) {
+                return 'Data Inválida'; // Ou 'N/A' conforme sua preferência
+            }
             const year = dateStr.substring(0, 4);
             const month = dateStr.substring(4, 6);
             const day = dateStr.substring(6, 8);
+
+            // Retorna a data no formato DD/MM/YYYY
             return `${day}/${month}/${year}`;
         }
 
+        // Função para exibir mensagens de alerta temporárias
         function showAlert(message, type) {
-            const alertClass = type === 'error' ? 'alert-error' : 
+            const alertClass = type === 'error' ? 'alert-error' :
                              type === 'success' ? 'alert-success' : 'alert-info';
-            
+
             const alertElement = document.createElement('div');
             alertElement.className = `alert ${alertClass}`;
             alertElement.textContent = message;
-            
+
+            // Limpa alertas anteriores para evitar acúmulo
             alertContainer.innerHTML = '';
             alertContainer.appendChild(alertElement);
-            
+
+            // Remove o alerta após 5 segundos
             setTimeout(() => {
                 alertElement.remove();
             }, 5000);
@@ -742,4 +845,3 @@
     </script>
 </body>
 </html>
-
